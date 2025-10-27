@@ -68,6 +68,17 @@ const executePowerShellScript = (scriptName, args = []) => {
 // all processes
 app.get("/api/system/processes", async (req, res) => {
   console.log("[API] GET /api/system/processes called");
+  
+  // Check if system monitor data is enabled
+  if (!dataControlState.systemMonitorEnabled) {
+    res.status(423).json({ 
+      error: 'System monitor data disabled',
+      message: 'Data collection is disabled for system monitor',
+      enabled: false
+    });
+    return;
+  }
+  
   try {
     const procs = await getProcesses();
     console.log(`[API] Returning ${procs.length} processes`);
@@ -101,6 +112,17 @@ app.get("/api/system/suspicious", async (req, res) => {
 // system health summary
 app.get("/api/system/health", async (req, res) => {
   console.log("[API] GET /api/system/health called");
+  
+  // Check if system monitor data is enabled
+  if (!dataControlState.systemMonitorEnabled) {
+    res.status(423).json({ 
+      error: 'System monitor data disabled',
+      message: 'Data collection is disabled for system monitor',
+      enabled: false
+    });
+    return;
+  }
+  
   try {
     const health = await getSystemHealth();
     console.log("[API] Health data:", JSON.stringify(health, null, 2));
@@ -201,6 +223,12 @@ const initializeCapture = () => {
   captureController = startContinuousCapture(
     getCurrentInterface(),
     (packets, metrics) => {
+      // Skip data processing if dashboard data is disabled
+      if (!dataControlState.dashboardEnabled) {
+        console.log('Dashboard data disabled - skipping metrics processing');
+        return;
+      }
+      
       //console.log(`Received packets: ${packets?.length || 0} at ${new Date().toISOString()}`);
       //console.log('Raw metrics received:', metrics);
       
@@ -317,8 +345,47 @@ app.post('/interface', (req, res) => {
   res.json({ interface: getCurrentInterface() });
 });
 
+// Global data control state
+let dataControlState = {
+  dashboardEnabled: true,
+  systemMonitorEnabled: true
+};
+
+// Load data control state from file if it exists
+import fs from 'fs';
+const DATA_CONTROL_FILE = './data-control-state.json';
+
+try {
+  if (fs.existsSync(DATA_CONTROL_FILE)) {
+    const savedState = JSON.parse(fs.readFileSync(DATA_CONTROL_FILE, 'utf8'));
+    dataControlState = { ...dataControlState, ...savedState };
+    console.log('Loaded data control state:', dataControlState);
+  }
+} catch (error) {
+  console.error('Error loading data control state:', error);
+}
+
+// Function to save data control state
+const saveDataControlState = () => {
+  try {
+    fs.writeFileSync(DATA_CONTROL_FILE, JSON.stringify(dataControlState, null, 2));
+  } catch (error) {
+    console.error('Error saving data control state:', error);
+  }
+};
+
 app.get('/metrics', (req, res) => {
   //console.log('Frontend requesting metrics...');
+  
+  // Check if dashboard data is enabled
+  if (!dataControlState.dashboardEnabled) {
+    res.status(423).json({ 
+      error: 'Dashboard data disabled',
+      message: 'Data collection is disabled for dashboard',
+      enabled: false
+    });
+    return;
+  }
   
   if (latestMetrics) {
     // console.log('Sending metrics to frontend:', {
@@ -337,6 +404,47 @@ app.get('/metrics', (req, res) => {
       interface: getCurrentInterface()
     });
   }
+});
+
+// Data control endpoints
+app.get('/api/data-control', (req, res) => {
+  res.json(dataControlState);
+});
+
+app.post('/api/data-control', (req, res) => {
+  const { dashboardEnabled, systemMonitorEnabled } = req.body;
+  
+  if (typeof dashboardEnabled === 'boolean') {
+    const wasEnabled = dataControlState.dashboardEnabled;
+    dataControlState.dashboardEnabled = dashboardEnabled;
+    console.log(`Dashboard data ${dashboardEnabled ? 'enabled' : 'disabled'}`);
+    
+    // Control the actual data capture
+    if (dashboardEnabled && !wasEnabled) {
+      // Re-enable: restart capture if it was stopped
+      if (!captureController || !captureController.isRunning()) {
+        console.log('Restarting network capture...');
+        setTimeout(initializeCapture, 100);
+      }
+    } else if (!dashboardEnabled && wasEnabled) {
+      // Disable: stop capture and clear metrics
+      if (captureController && captureController.isRunning()) {
+        console.log('Stopping network capture...');
+        captureController.stop();
+        latestMetrics = null; // Clear existing metrics
+      }
+    }
+    saveDataControlState();
+  }
+  
+  if (typeof systemMonitorEnabled === 'boolean') {
+    dataControlState.systemMonitorEnabled = systemMonitorEnabled;
+    console.log(`System monitor data ${systemMonitorEnabled ? 'enabled' : 'disabled'}`);
+    saveDataControlState();
+    // Note: System monitoring is handled at the endpoint level
+  }
+  
+  res.json(dataControlState);
 });
 
 app.get('/status', (req, res) => {
@@ -421,9 +529,20 @@ server.listen(PORT, () => {
   console.log(`Health check available at http://localhost:${PORT}/health`);
   console.log(`Status check available at http://localhost:${PORT}/status`);
   console.log(`Debug info available at http://localhost:${PORT}/debug`);
-  startProcessMonitor();
-  // Initialize capture after a short delay to let server fully start
-  setTimeout(initializeCapture, 1000);
+  
+  // Only start processes if they're enabled
+  if (dataControlState.systemMonitorEnabled) {
+    startProcessMonitor();
+  } else {
+    console.log('System monitor disabled - skipping process monitor startup');
+  }
+  
+  // Initialize capture after a short delay to let server fully start (only if enabled)
+  if (dataControlState.dashboardEnabled) {
+    setTimeout(initializeCapture, 1000);
+  } else {
+    console.log('Dashboard data disabled - skipping network capture startup');
+  }
 });
 
 // === GEMINI Q/A === for system monitoring

@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { exportSettingsToCSV } from "@/utils/exportUtils";
+import { dataControlStore, DataControlState } from "@/utils/dataControlStore";
 
 interface SettingsGroup {
   id: string;
@@ -26,6 +27,7 @@ interface Setting {
 }
 
 const Settings = () => {
+  const [dataControlState, setDataControlState] = useState<DataControlState>(dataControlStore.getState());
   const [settingsGroups, setSettingsGroups] = useState<SettingsGroup[]>([
     {
       id: "general",
@@ -51,6 +53,26 @@ const Settings = () => {
           description: "Display alerts when network issues are detected",
           type: "toggle",
           value: true
+        }
+      ]
+    },
+    {
+      id: "data-control",
+      title: "Data Control",
+      settings: [
+        {
+          id: "dashboard-data",
+          name: "Dashboard Data Fetching",
+          description: "Enable/disable real-time data fetching for network metrics dashboard",
+          type: "toggle",
+          value: dataControlState.dashboardEnabled
+        },
+        {
+          id: "system-monitor-data",
+          name: "System Monitor Data Fetching",
+          description: "Enable/disable real-time data fetching for system monitor processes and health",
+          type: "toggle",
+          value: dataControlState.systemMonitorEnabled
         }
       ]
     },
@@ -92,6 +114,24 @@ const Settings = () => {
     }
   ]);
 
+  // Update backend data control state
+  const updateBackendDataControl = async () => {
+    try {
+      const state = dataControlStore.getState();
+      await fetch('/api/data-control', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(state),
+      });
+      toast.success("Data control updated");
+    } catch (error) {
+      console.error('Error updating backend data control:', error);
+      toast.error("Failed to update data control");
+    }
+  };
+
   // Initialize state from localStorage if available
   useEffect(() => {
     const savedSettings = localStorage.getItem('pxmonitor-settings');
@@ -102,6 +142,32 @@ const Settings = () => {
         console.error("Error loading settings:", error);
       }
     }
+
+    // Subscribe to data control changes
+    const unsubscribe = dataControlStore.subscribe((state) => {
+      setDataControlState(state);
+      // Update the settings groups to reflect the new state
+      setSettingsGroups(prevGroups => 
+        prevGroups.map(group => {
+          if (group.id === "data-control") {
+            return {
+              ...group,
+              settings: group.settings.map(setting => {
+                if (setting.id === "dashboard-data") {
+                  return { ...setting, value: state.dashboardEnabled };
+                } else if (setting.id === "system-monitor-data") {
+                  return { ...setting, value: state.systemMonitorEnabled };
+                }
+                return setting;
+              })
+            };
+          }
+          return group;
+        })
+      );
+    });
+
+    return unsubscribe;
   }, []);
 
   // Apply theme mode on load and when it changes
@@ -128,7 +194,16 @@ const Settings = () => {
     .find(group => group.id === "general")
     ?.settings.find(setting => setting.id === "notifications")?.value || false;
 
-  const handleSettingChange = (groupId: string, settingId: string, newValue: any) => {
+  // Get data control settings
+  const dashboardDataEnabled = settingsGroups
+    .find(group => group.id === "data-control")
+    ?.settings.find(setting => setting.id === "dashboard-data")?.value || true;
+    
+  const systemMonitorDataEnabled = settingsGroups
+    .find(group => group.id === "data-control")
+    ?.settings.find(setting => setting.id === "system-monitor-data")?.value || true;
+
+  const handleSettingChange = (groupId: string, settingId: string, newValue: boolean | number | string) => {
     setSettingsGroups(prevGroups => 
       prevGroups.map(group => {
         if (group.id === groupId) {
@@ -146,6 +221,25 @@ const Settings = () => {
                     document.documentElement.classList.remove("dark");
                     document.documentElement.classList.add("light");
                   }
+                }
+                
+                // Handle data control settings - update global state and backend
+                if (settingId === "dashboard-data") {
+                  dataControlStore.setDashboardEnabled(newValue as boolean);
+                  updateBackendDataControl();
+                } else if (settingId === "system-monitor-data") {
+                  dataControlStore.setSystemMonitorEnabled(newValue as boolean);
+                  updateBackendDataControl();
+                }
+                
+                return { ...setting, value: newValue };
+                if (settingId === "dashboard-data" || settingId === "system-monitor-data") {
+                  window.dispatchEvent(new CustomEvent('dataControlChanged', {
+                    detail: {
+                      type: settingId,
+                      enabled: newValue
+                    }
+                  }));
                 }
                 
                 return { ...setting, value: newValue };
@@ -168,6 +262,8 @@ const Settings = () => {
       detail: { 
         darkMode: isDarkMode,
         showNotifications,
+        dashboardDataEnabled,
+        systemMonitorDataEnabled,
         settingsGroups
       } 
     }));

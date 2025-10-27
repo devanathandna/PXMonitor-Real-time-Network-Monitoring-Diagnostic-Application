@@ -1,8 +1,10 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge"; // Import Badge for service status
+import { DataDisabledOverlay } from "@/components/ui/data-disabled-overlay";
+import { dataControlStore, DataControlState } from "@/utils/dataControlStore";
 
 // --- (Existing ProcessInfo interface is unchanged) ---
 interface ProcessInfo {
@@ -94,6 +96,7 @@ function ChatBubble({ text, role }: { text: string; role: "user" | "ai" }) {
 }
 
 export default function SystemMonitor() {
+  const [dataControlState, setDataControlState] = useState<DataControlState>(dataControlStore.getState());
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [question, setQuestion] = useState("");
@@ -104,8 +107,9 @@ export default function SystemMonitor() {
   const FETCH_INTERVAL_MS = 10000; // 10 seconds
   const [chatScrollPct, setChatScrollPct] = useState(100); // 0..100 (0 = top, 100 = bottom)
   const scrollbarRef = useRef<HTMLInputElement|null>(null);
-  // --- (Existing fetchSystemData and useEffect are unchanged) ---
-  const fetchSystemData = async () => {
+  const fetchSystemData = useCallback(async () => {
+    if (!dataControlState.systemMonitorEnabled) return;
+    
     try {
       const [procRes, healthRes] = await Promise.all([
         fetch("/api/system/processes"),
@@ -121,17 +125,32 @@ export default function SystemMonitor() {
       setProcesses(Array.isArray(procData) ? procData : []);
       setHealth(healthData);
       setError(null); // clear previous errors if successful
-    } catch (err: any) {
-      console.error("Error fetching system data:", err);
-      setError(err.message || "Unknown error fetching system data");
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "Unknown error fetching system data";
+      console.error("Error fetching system data:", errorMessage);
+      setError(errorMessage);
     }
-  };
+  }, [dataControlState.systemMonitorEnabled]);
 
   useEffect(() => {
-    fetchSystemData(); // initial fetch
-    const interval = setInterval(fetchSystemData, FETCH_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, []);
+    let interval: NodeJS.Timeout;
+
+    // Subscribe to data control changes
+    const unsubscribeDataControl = dataControlStore.subscribe((state) => {
+      setDataControlState(state);
+    });
+
+    // Start fetching if enabled
+    if (dataControlState.systemMonitorEnabled) {
+      fetchSystemData(); // initial fetch
+      interval = setInterval(fetchSystemData, FETCH_INTERVAL_MS);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+      unsubscribeDataControl();
+    };
+  }, [dataControlState.systemMonitorEnabled, fetchSystemData]);
 
   // --- (Existing askAI function is unchanged) ---
   useEffect(() => {
@@ -158,8 +177,9 @@ export default function SystemMonitor() {
 
       const data = await res.json();
       setChatHistory((h) => [...h, { role: "ai", text: data.answer }]);
-    } catch (err: any) {
-      console.error("Error asking AI:", err);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      console.error("Error asking AI:", errorMessage);
       setChatHistory((h) => [...h, { role: "ai", text: "Sorry, I couldn't get an answer right now." }]);
     } finally {
       setIsAiThinking(false); // --- SET loading state to false ---
@@ -174,7 +194,7 @@ export default function SystemMonitor() {
   };
   // --- UPDATED JSX with new health metrics display ---
   return (
-    <div className="grid grid-cols-3 gap-4 p-4 h-screen">
+    <div className="grid grid-cols-3 gap-4 p-4 h-screen relative">
       {/* Task Manager Side */}
       <Card className="col-span-2 overflow-hidden flex flex-col">
         <CardHeader>
@@ -297,6 +317,16 @@ export default function SystemMonitor() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Data Disabled Overlay */}
+      {!dataControlState.systemMonitorEnabled && (
+        <DataDisabledOverlay 
+          type="system-monitor" 
+          onEnable={() => {
+            // Refresh will happen automatically through data control store subscription
+          }} 
+        />
+      )}
     </div>
   );
 }

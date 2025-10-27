@@ -28,9 +28,14 @@ export const NetworkMetricsProvider = ({ children }: { children: ReactNode }) =>
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dataFetchingEnabled, setDataFetchingEnabled] = useState(true);
 
   useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
     const fetchData = async () => {
+      if (!dataFetchingEnabled) return;
+      
       try {
         // Fetching from the correct '/metrics' endpoint as defined in index.js
         const response = await fetch('/metrics');
@@ -44,19 +49,36 @@ export const NetworkMetricsProvider = ({ children }: { children: ReactNode }) =>
         const data = await response.json();
         setMetrics(data);
         setError(null);
-      } catch (e: any) {
-        console.error("Failed to fetch network metrics:", e.message);
-        setError(e.message);
+      } catch (e: unknown) {
+        const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+        console.error("Failed to fetch network metrics:", errorMessage);
+        setError(errorMessage);
       } finally {
         setIsLoading(false);
       }
     };
 
-    fetchData(); // Initial fetch
-    const intervalId = setInterval(fetchData, 5000); // Fetch every 5 seconds
+    // Listen for data control changes
+    const handleDataControlChange = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail.type === 'dashboard-data') {
+        setDataFetchingEnabled(customEvent.detail.enabled);
+      }
+    };
 
-    return () => clearInterval(intervalId); // Cleanup on unmount
-  }, []);
+    window.addEventListener('dataControlChanged', handleDataControlChange);
+
+    // Start fetching if enabled
+    if (dataFetchingEnabled) {
+      fetchData(); // Initial fetch
+      intervalId = setInterval(fetchData, 5000); // Fetch every 5 seconds
+    }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      window.removeEventListener('dataControlChanged', handleDataControlChange);
+    };
+  }, [dataFetchingEnabled]);
 
   return (
     <NetworkMetricsContext.Provider value={{ metrics, isLoading, error }}>

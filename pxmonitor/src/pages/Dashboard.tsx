@@ -6,6 +6,8 @@ import AlertBanner from "@/components/dashboard/AlertBanner";
 import ProtocolDistribution from "@/components/dashboard/ProtocolDistribution";
 import MultiLineChart from "@/components/dashboard/MultiLineChart";
 import NetworkAnalysis from "@/components/dashboard/NetworkAnalysis";
+import { DataDisabledOverlay } from "@/components/ui/data-disabled-overlay";
+import { dataControlStore, DataControlState } from "@/utils/dataControlStore";
 import { Clock, Wifi, FileTerminal, Database, Activity, AlertCircle, CheckCircle, WifiOff, Loader2 } from "lucide-react";
 
 interface MetricsData {
@@ -31,6 +33,9 @@ interface ChartDataPoint {
 }
 
 const Dashboard = () => {
+  // Data control state
+  const [dataControlState, setDataControlState] = useState<DataControlState>(dataControlStore.getState());
+  
   // Core metrics state
   const [metrics, setMetrics] = useState<MetricsData>({
     latency: 0,
@@ -293,8 +298,16 @@ const Dashboard = () => {
       }
     };
     
+    // Subscribe to data control changes
+    const unsubscribeDataControl = dataControlStore.subscribe((state) => {
+      setDataControlState(state);
+    });
+    
     window.addEventListener('settingsUpdated', handleSettingsUpdate);
-    return () => window.removeEventListener('settingsUpdated', handleSettingsUpdate);
+    return () => {
+      window.removeEventListener('settingsUpdated', handleSettingsUpdate);
+      unsubscribeDataControl();
+    };
   }, []);
 
   // Handle network fix action
@@ -354,7 +367,7 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="grid-bg min-h-screen">
+    <div className="grid-bg min-h-screen relative">
       <div className="container mx-auto p-6">
         {/* Header */}
         <div className="flex justify-between items-center mb-6">
@@ -531,6 +544,16 @@ const Dashboard = () => {
           <NetworkAnalysis metrics={metrics} />
         </div>
       </div>
+
+      {/* Data Disabled Overlay */}
+      {!dataControlState.dashboardEnabled && (
+        <DataDisabledOverlay 
+          type="dashboard" 
+          onEnable={() => {
+            // Refresh will happen automatically through data control store subscription
+          }} 
+        />
+      )}
     </div>
   );
 };

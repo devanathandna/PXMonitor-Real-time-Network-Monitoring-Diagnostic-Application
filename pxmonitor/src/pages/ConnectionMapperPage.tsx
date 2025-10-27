@@ -4,8 +4,10 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Info, Shield, Wifi, RefreshCw } from "lucide-react";
+import { Info, Shield, Wifi, RefreshCw, Globe, List } from "lucide-react";
 import { Popover, PopoverContent,PopoverTrigger,} from "@/components/ui/popover";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import WorldMap from "@/components/dashboard/WorldMap";
 
 interface ConnectionInfo {
   pid: number;
@@ -21,6 +23,15 @@ interface GroupedConnection {
   name: string;
   count: number;
   connections: Omit<ConnectionInfo, 'pid' | 'name'>[];
+}
+
+interface WorldMapConnection {
+  ip: string;
+  hostname: string;
+  country: string;
+  status: string;
+  processName: string;
+  port: number;
 }
 
 export default function ConnectionMapperPage() {
@@ -54,6 +65,20 @@ export default function ConnectionMapperPage() {
       });
     });
     return Object.values(groups).sort((a, b) => b.count - a.count);
+  }, [connections]);
+
+  // Transform connections for WorldMap component
+  const worldMapConnections = useMemo((): WorldMapConnection[] => {
+    return connections
+      .filter(conn => conn.country !== 'N/A' && conn.country !== 'Local')
+      .map(conn => ({
+        ip: conn.remoteAddress,
+        hostname: conn.hostname,
+        country: conn.country,
+        status: 'active',
+        processName: conn.name,
+        port: conn.remotePort
+      }));
   }, [connections]);
 
 
@@ -165,71 +190,100 @@ export default function ConnectionMapperPage() {
           {error && <p className="text-red-500">Error: {error}</p>}
           
           {!isLoading && !error && (
-            <Accordion type="single" collapsible className="w-full">
-              {groupedConnections.map(({ name, pid, count, connections: connList }) => (
-                <AccordionItem value={`item-${pid}`} key={pid}>
-                  <AccordionTrigger>
-                    <div className="flex justify-between w-full pr-4">
-                      <span>{name} ({pid})</span>
-                      <span className="text-sm text-muted-foreground">{count} connections</span>
+            <Tabs defaultValue="map" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="map" className="flex items-center gap-2">
+                  <Globe className="h-4 w-4" />
+                  World Map View
+                </TabsTrigger>
+                <TabsTrigger value="list" className="flex items-center gap-2">
+                  <List className="h-4 w-4" />
+                  Detailed List
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="map" className="mt-4">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-lg font-semibold">Global Connection Map</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Geographic visualization of your network connections ({worldMapConnections.length} external connections)
+                      </p>
                     </div>
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Remote Address</TableHead>
-                          <TableHead>Hostname</TableHead>
-                          <TableHead>Country</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {connList.map((conn, index) => (
-                          <TableRow key={index}>
-                            <TableCell>{conn.remoteAddress}:{conn.remotePort}</TableCell>
-                            <TableCell className="font-mono text-xs">{conn.hostname}</TableCell>
-                            <TableCell>{conn.country}</TableCell>
-                            <TableCell className="text-right space-x-2">
-                              {/* --- THIS IS THE UPDATED POPOVER UI --- */}
-                            <Popover onOpenChange={(isOpen) => !isOpen && setExplainingHostname(null)}>
-                              <PopoverTrigger asChild>
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  onClick={() => handleExplainConnection(conn.hostname)}
-                                  disabled={!conn.hostname || conn.hostname === 'N/A'}
-                                >
-                                  <Info className="h-4 w-4" />
-                                </Button>
-                              </PopoverTrigger>
-                              {/* Show the popover only for the hostname we are currently explaining */}
-                              {explainingHostname === conn.hostname && (
-                                <PopoverContent className="w-80">
-                                  <div className="grid gap-4">
-                                    <div className="space-y-2">
-                                      <h4 className="font-medium leading-none">AI Explanation</h4>
-                                      <p className="text-sm text-muted-foreground">
-                                        {explanation}
-                                      </p>
-                                    </div>
-                                  </div>
-                                </PopoverContent>
-                              )}
-                            </Popover>
+                  </div>
+                  <WorldMap connections={worldMapConnections} height="500px" />
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="list" className="mt-4">
+                <Accordion type="single" collapsible className="w-full">
+                  {groupedConnections.map(({ name, pid, count, connections: connList }) => (
+                    <AccordionItem value={`item-${pid}`} key={pid}>
+                      <AccordionTrigger>
+                        <div className="flex justify-between w-full pr-4">
+                          <span>{name} ({pid})</span>
+                          <span className="text-sm text-muted-foreground">{count} connections</span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Remote Address</TableHead>
+                              <TableHead>Hostname</TableHead>
+                              <TableHead>Country</TableHead>
+                              <TableHead className="text-right">Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {connList.map((conn, index) => (
+                              <TableRow key={index}>
+                                <TableCell>{conn.remoteAddress}:{conn.remotePort}</TableCell>
+                                <TableCell className="font-mono text-xs">{conn.hostname}</TableCell>
+                                <TableCell>{conn.country}</TableCell>
+                                <TableCell className="text-right space-x-2">
+                                  {/* --- THIS IS THE UPDATED POPOVER UI --- */}
+                                <Popover onOpenChange={(isOpen) => !isOpen && setExplainingHostname(null)}>
+                                  <PopoverTrigger asChild>
+                                    <Button 
+                                      variant="ghost" 
+                                      size="icon" 
+                                      onClick={() => handleExplainConnection(conn.hostname)}
+                                      disabled={!conn.hostname || conn.hostname === 'N/A'}
+                                    >
+                                      <Info className="h-4 w-4" />
+                                    </Button>
+                                  </PopoverTrigger>
+                                  {/* Show the popover only for the hostname we are currently explaining */}
+                                  {explainingHostname === conn.hostname && (
+                                    <PopoverContent className="w-80">
+                                      <div className="grid gap-4">
+                                        <div className="space-y-2">
+                                          <h4 className="font-medium leading-none">AI Explanation</h4>
+                                          <p className="text-sm text-muted-foreground">
+                                            {explanation}
+                                          </p>
+                                        </div>
+                                      </div>
+                                    </PopoverContent>
+                                  )}
+                                </Popover>
 
-                              <Button variant="ghost" size="icon" disabled>
-                                <Wifi className="h-4 w-4" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
+                                  <Button variant="ghost" size="icon" disabled>
+                                    <Wifi className="h-4 w-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              </TabsContent>
+            </Tabs>
           )}
         </CardContent>
       </Card>
